@@ -7,6 +7,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+# Pydantic models
+from schemas import PostCreate, PostResponse
+
 # Change the decorator on home by giving each decorator a name (ex. "home", "posts") so that it does correct routing
 
 app = FastAPI()
@@ -20,14 +23,14 @@ posts: list[dict] = [
         "title": "FastAPI Project post",
         "content": "FastAPI is the Python framework that helps to build web-applications.",
         "author": "Daniiar Suiunbekov",
-        "date": "February, 2026"
+        "date_posted": "February, 2026"
     },
     {
         "id": 2,
         "title": "Hello World Project",
-        "content": "Hello-world-project is the simplest form of a project to practice concepts learned. Mostly the term is used in programming when one creates a simple program.",
+        "content": "Hello-world-project is the simplest form of a project to practice concepts learned.",
         "author": "Anton Makarov",
-        "date": "January, 2026"
+        "date_posted": "January, 2026"
     }
 ]
 
@@ -54,17 +57,32 @@ def post_page(request: Request, post_id: int):
 # API Routes
 # ==================================
 
-@app.get('/api/posts')
+@app.get('/api/posts', response_model=list[PostResponse])
 def get_posts():
     return posts
 
-@app.get('/api/posts/{post_id}')
+@app.get('/api/posts/{post_id}', response_model=PostResponse)
 def get_post(post_id: int):
     for post in posts:
         if post.get("id") == post_id:
             return post
     
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+@app.post('/api/posts', response_model=PostResponse, status_code=status.HTTP_201_CREATED)
+def create_post(post: PostCreate):
+    new_id = max(post["id"] for post in posts) + 1 if posts else 1
+
+    new_post = {
+        "id": new_id,
+        "title": post.title,
+        "content": post.content,
+        "author": post.author,
+        "date_posted": "February 13, 2026"
+    }
+
+    posts.append(new_post)
+    return new_post
 
 # ==================================
 # Exception Handler
@@ -89,7 +107,7 @@ def general_http_exception_handler(request: Request, exception: StarletteHTTPExc
 # Validation error: /posts/{str} instead of /posts/{int} for example
 # Validates both for "api" and "template" returning routes
 @app.exception_handler(RequestValidationError)
-def validation_exception_hamdler(request: Request, exception: RequestValidationError):
+def validation_exception_handler(request: Request, exception: RequestValidationError):
     if request.url.path.startswith("/api"):
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content={"detail": exception.errors()})
     
