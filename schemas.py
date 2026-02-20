@@ -1,15 +1,43 @@
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 
-class PostBase(BaseModel):
-    title: str = Field(min_length=1, max_length=100)
-    content: str = Field(min_length=1, max_length=100)
-    author: str = Field(min_length=1, max_length=50)
+# ========================================
+# User Schemas
+# ========================================
 
-class PostCreate(PostBase):
+class UserBase(BaseModel):
+    username: str = Field(min_length=1, max_length=50)
+    email: EmailStr = Field(max_length=120)
+
+class UserCreate(UserBase):
     pass
 
-class PostResponse(PostBase):
+class UserResponse(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    date_posted: str
+    image_file: str | None
+    image_path: str 
+
+
+# ========================================
+# Post Schemas
+# ========================================
+
+class PostBase(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
+    content: str = Field(min_length=1, max_length=1000)
+
+class PostCreate(PostBase):
+    user_id: int # TEMPORARY
+
+class PostResponse(PostBase):
+    # First thing Pydantic tries to do when accepts SQL Alchemy ORM object is it tries reading it as dictionary:
+    # Example: user["id"], post["content"]. But SQL Alchemy ORM object are accessed via attributes as user.id or post.content.
+    # model_config = ConfigDict(from_attributes=True) allows Pydantic to access ORM objects fields not only as dictionary, but via attributes as well: user["id"] and uesr.id
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    date_posted: datetime
+    author: UserResponse
