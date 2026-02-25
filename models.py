@@ -16,6 +16,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     image_file: Mapped[str | None] = mapped_column(String(200), nullable=True, default=None)
 
+    # this defines relationship between User and Post tables
+    # note that variable names in the backpopulate argument must be identical to the ones specified in the class fields
     posts: Mapped[list[Post]] = relationship(back_populates="author", cascade="all, delete-orphan")
 
     @property
@@ -33,4 +35,6 @@ class Post(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     date_posted: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # this defines relationship between Post and User tables
     author: Mapped[User] = relationship(back_populates="posts")
