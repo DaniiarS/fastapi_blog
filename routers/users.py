@@ -1,18 +1,25 @@
 from typing import Annotated
+from datetime import timedelta
 
 # FastAPI imports
 from fastapi import APIRouter, Depends,status
 from fastapi.exceptions import HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+
+# auth imports
+from auth import create_access_token, verify_access_token, verify_password, hash_password, oauth2_scheme
+
+from config import settings
 
 # Database, SQLAlchemy imports
 from database import get_db
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
 
 # Pydantic Schemas imports
-from schemas import UserResponse, PostResponse, UserUpdate, UserCreate
+from schemas import UserPublicResponse, PostResponse, UserUpdate, UserCreate, UserPrivateResponse, Token
 
 
 router = APIRouter()
@@ -21,14 +28,101 @@ router = APIRouter()
 
 #------------------------------------------- USER -------------------------------------------
 #--------------------------------------------------------------------------------------------
-@router.get("", response_model=list[UserResponse])
+
+@router.post("", response_model=UserPrivateResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(user: UserCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+    result = await db.execute(select(models.User).where(func.lower(models.User.username) == user.username.lower()))
+    existing_user = result.scalars().first()
+
+    if existing_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exist")
+    
+    result = await db.execute(select(models.User).where(func.lower(models.User.email) == user.email))
+    existing_email = result.scalars().first()
+
+    if existing_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
+    
+    new_user = models.User(
+        username=user.username, 
+        email=user.email.lower(),
+        password_hash=hash_password(user.password)
+    )
+
+    # Note: ask chatGPT about these commands
+    # db.add() just adds the object to the session's pending list in the memory, and no db operation happens at this point
+    db.add(new_user)
+    # the actual db operations take place on db.commit() and db.refresh()
+    await db.commit()
+    await db.refresh(new_user)
+
+    return new_user
+
+@router.post("/token", response_model=Token)
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], 
+                                 db: Annotated[AsyncSession, Depends(get_db)]):
+    # Look up user by email (case-insensitive)
+    # Note: OAuth2PasswordRequestForm uses "username" field, but we treat it as email
+    result = await db.execute(select(models.User).where(func.lower(models.User.email) == form_data.username.lower()))
+    user: models.User | None = result.scalars().first()
+
+    # Verify user exists and password is correct
+    # Don't reveal which one failed (security best practice)
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Incorrect email or password",
+                            headers={"WWW-Authenticate": "Bearer"})
+    
+    # Create access token with user id as subject
+    access_token_expires = timedelta(minutes=settings.access_token_expire_minutes)
+    access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=access_token_expires
+    )
+
+    return Token(access_token=access_token, token_type="bearer")
+
+@router.get("/me", response_model=UserPrivateResponse)
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[AsyncSession, Depends(get_db)]):
+    """Get the currently authenticated user"""
+    user_id = verify_access_token(token)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # Validate user_id is a valid integer (defense against malformed JWT)
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    result = await db.execute(select(models.User).where(models.User.id == user_id_int))
+    user = result.scalars().first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found", 
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    return user
+
+@router.get("", response_model=list[UserPublicResponse])
 async def get_users(db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(models.User))
     users = result.scalars().all()
 
     return users
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", response_model=UserPublicResponse)
 async def get_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalars().first()
@@ -53,34 +147,10 @@ async def get_user_posts(user_id: int, db: Annotated[AsyncSession, Depends(get_d
 
     return posts
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(user: UserCreate, db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.User).where(models.User.username == user.username))
-    existing_user = result.scalars().first()
-
-    if existing_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exist")
-    
-    result = await db.execute(select(models.User).where(models.User.email == user.email))
-    existing_email = result.scalars().first()
-
-    if existing_email:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already exists")
-    
-    new_user = models.User(username=user.username, email=user.email)
-
-    # Note: ask chatGPT about these commands
-    # db.add() just adds the object to the session's pending list in the memory, and no db operation happens at this point
-    db.add(new_user)
-    # the actual db operations take place on db.commit() and db.refresh()
-    await db.commit()
-    await db.refresh(new_user)
-
-    return new_user
 
 # PATCH method - updates information partially (some fields)
 # PUT method - updates information fully (replaces old item with new)
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch("/{user_id}", response_model=UserPrivateResponse)
 async def update_user_partial(user_id: int, user_update: UserUpdate, db: Annotated[AsyncSession, Depends(get_db)]):
     # check is the user to be updated exists
     result = await db.execute(select(models.User).where(models.User.id == user_id))
@@ -90,17 +160,17 @@ async def update_user_partial(user_id: int, user_update: UserUpdate, db: Annotat
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     # if the user exists, check if the value to be updated is not the same as it already is
-    if user_update.username is not None and user_update.username != user.username:
+    if user_update.username is not None and user_update.username.lower() != user.username.lower():
         # check if the new_username is not taken already
-        result = await db.execute(select(models.User).where(models.User.username == user_update.username))
+        result = await db.execute(select(models.User).where(func.lower(models.User.username) == user_update.username.lower()))
         existing_user = result.scalars().first()
 
         if existing_user:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
         
     # Repeat for the email field
-    if user_update.email is not None and user.email != user_update.email:
-        result = await db.execute(select(models.User).where(models.User.email == user_update.email))
+    if user_update.email is not None and user.email.lower() != user_update.email.lower():
+        result = await db.execute(select(models.User).where(func.lower(models.User.email) == user_update.email.lower()))
         existing_user = result.scalars().first()
 
         if existing_user:
@@ -109,7 +179,7 @@ async def update_user_partial(user_id: int, user_update: UserUpdate, db: Annotat
     if user_update.username is not None:
         user.username = user_update.username
     if user_update.email is not None:
-        user.email = user_update.email
+        user.email = user_update.email.lower()
     if user_update.image_file is not None:
         user.image_file = user_update.image_file
     
