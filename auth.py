@@ -17,9 +17,9 @@ from config import settings
 
 password_hash = PasswordHash.recommended()
 
-# tokenURL has to match login endpoint path
+# tokenUrl has to match the login endpoint path
 # OAuth2PasswordBearer extracts the token from the authorization header
-# when a client sends that the scheme extracts that token for us
+# when a client sends that, the scheme extracts that token for us
 # this enables the authorize button in our docs which makes testing authentication a lot easier
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/users/token")
 
