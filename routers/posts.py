@@ -1,12 +1,11 @@
 from typing import Annotated
 
 # FastAPI imports
-from fastapi import Depends, APIRouter
-from fastapi import status, HTTPException
+from fastapi import Depends, APIRouter, status, HTTPException, Query
 
 # Database, SQLAlchemy improts
 from database import get_db
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
@@ -14,7 +13,7 @@ import models
 from auth import CurrentUser
 
 # Pydantic Schemas imports
-from schemas import PostResponse, PostCreate, PostUpdate
+from schemas import PostResponse, PostCreate, PostUpdate, PaginatedPostResponse
 
 
 # prefix is '/api/posts/
@@ -23,12 +22,32 @@ router = APIRouter()
 #------------------------------------------- POST -------------------------------------------
 #--------------------------------------------------------------------------------------------
 
-@router.get('', response_model=list[PostResponse])
-async def get_posts(db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).order_by(models.Post.date_posted.desc()))
+@router.get('', response_model=PaginatedPostResponse)
+async def get_posts(
+            db: Annotated[AsyncSession, Depends(get_db)], 
+            skip: Annotated[int, Query(ge=0)] = 0,
+            limit: Annotated[int, Query(ge=1, le=100)] = 10
+        ):
+    count_result = await db.execute(select(func.count()).select_from(models.Post))
+    total = count_result.scalar() or 0
+
+    result = await db.execute(select(models.Post).
+                              options(selectinload(models.Post.author)).
+                              order_by(models.Post.date_posted.desc()).
+                              offset(skip).
+                              limit(limit)
+                            )
     posts = result.scalars().all()
 
-    return posts
+    has_more: bool = (skip + len(posts)) < total
+
+    return PaginatedPostResponse(
+        posts=[PostResponse.model_validate(post) for post in posts],
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_more=has_more
+    )
 
 @router.get('/{post_id}', response_model=PostResponse)
 async def get_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):

@@ -11,14 +11,17 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
 # Database and SQLAlchemy imports
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+
 import models
 from database import engine, get_db, Base
 
 # Import Routers from routers
 from routers import users, posts
+
+from config import settings
 
 # This is executed on start. Creates tables if they don't exist in the database, otherwise does nothing
 # It is safe to run it multiple times
@@ -60,10 +63,30 @@ async def home_page(request: Request, db: Annotated[AsyncSession, Depends(get_db
     # we have to use selectinload beacuse sync sqlalchemy does lazyloading, but async sqlalchemy doesn't support lazyloading
     # lazyloading enables to access the related fields of an object. For instance, if we load a Post object, on the background sqlalchemy runs sync query to load the Post.author. Therefore, after loading Post object we can access Post.author.username. But with the async sqlalchemy it doesn't work, because the query on the background is sync and it blocks the event loop
     # to handle this we have to use "selectinload" which wraps that sync query into async and loads the related fields
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).order_by(models.Post.date_posted.desc()))
+
+    count_result = await db.execute(select(func.count()).select_from(models.Post))
+    total = count_result.scalar() or 0
+
+
+    result = await db.execute(select(models.Post).
+                                options(selectinload(models.Post.author)).
+                                order_by(models.Post.date_posted.desc()).
+                                limit(settings.posts_per_page)
+                              )
     posts = result.scalars().all()
 
-    return templates.TemplateResponse(request, "home.html", {"posts": posts, "title": "Home"})
+    has_more = len(posts) < total
+
+    return templates.TemplateResponse(
+        request, 
+        "home.html", 
+        {
+            "posts": posts, 
+            "title": "Home",
+            "limit": settings.posts_per_page,
+            "has_more": has_more
+        }
+    )
 
 @app.get("/posts/{post_id}", include_in_schema=False)
 async def post_page(request: Request, post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
@@ -84,11 +107,32 @@ async def user_posts_page(request: Request, user_id: int, db: Annotated[AsyncSes
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     
+    count_result = await db.execute(select(func.count()).select_from(models.Post).where(models.Post.user_id == user_id))
+    total = count_result.scalar() or 0
+    
     # here we have to use ".options()" because futher in the "user_posts.html" template we are referring to the post.author.username and other related fields of the Post object
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).where(models.Post.user_id == user.id).order_by(models.Post.date_posted.desc()))
+    result = await db.execute(
+        select(models.Post).
+        options(selectinload(models.Post.author)).
+        where(models.Post.user_id == user.id).
+        order_by(models.Post.date_posted.desc()).
+        limit(settings.posts_per_page)
+    )
     posts = result.scalars().all()
 
-    return templates.TemplateResponse(request, "user_posts.html", {"posts": posts, "user": user, "title": f"{user.username}'s Posts"})
+    has_more = len(posts) < total
+
+    return templates.TemplateResponse(
+        request, 
+        "user_posts.html", 
+        {
+            "posts": posts, 
+            "user": user, 
+            "title": f"{user.username}'s Posts",
+            "limit": settings.posts_per_page,
+            "has_more": has_more
+        }
+    )
 
 # ========================================================================
 # API Routes: Post and User

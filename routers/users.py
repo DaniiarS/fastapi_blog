@@ -2,7 +2,7 @@ from typing import Annotated
 from datetime import timedelta
 
 # FastAPI imports
-from fastapi import APIRouter, Depends, status, UploadFile
+from fastapi import APIRouter, Depends, status, UploadFile, Query
 from fastapi.exceptions import HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -19,6 +19,17 @@ from auth import (
     CurrentUser
 )
 
+# Pydantic Schemas imports
+from schemas import (
+    UserPublicResponse, 
+    PostResponse, 
+    UserUpdate, 
+    UserCreate, 
+    UserPrivateResponse, 
+    Token, 
+    PaginatedPostResponse
+)
+
 from config import settings
 
 # Database, SQLAlchemy imports
@@ -27,9 +38,6 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 import models
-
-# Pydantic Schemas imports
-from schemas import UserPublicResponse, PostResponse, UserUpdate, UserCreate, UserPrivateResponse, Token
 
 
 router = APIRouter()
@@ -114,8 +122,12 @@ async def get_user(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
     
     return user
 
-@router.get("/{user_id}/posts", response_model=list[PostResponse])
-async def get_user_posts(user_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.get("/{user_id}/posts", response_model=PaginatedPostResponse)
+async def get_user_posts(user_id: int, 
+                         db: Annotated[AsyncSession, Depends(get_db)], 
+                         skip: Annotated[int, Query(ge=0)]=0,
+                         limit: Annotated[int, Query(ge=1, le=100)]=10
+    ):
     # Verify if the user exists first. Otherwise the result of "None" after executing the select command on Post table and 
     # receiving an empty list as a result means two things: either a use doesn't have posts or user doesn't exist
     result = await db.execute(select(models.User).where(models.User.id == user_id).order_by(models.Post.date_posted.desc()))
@@ -123,11 +135,30 @@ async def get_user_posts(user_id: int, db: Annotated[AsyncSession, Depends(get_d
 
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    count_result = await db.execute(select(func.count()).select_from(models.Post).where(models.Post.user_id == user_id))
+    total = count_result.scalar() or 0
 
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).where(models.Post.user_id == user.id))
+    result = await db.execute(
+        select(models.Post).
+        options(selectinload(models.Post.author)).
+        where(models.Post.user_id == user.id).
+        order_by(models.Post.date_posted.desc()).
+        offset(skip).
+        limit(limit)
+    )
+
+
     posts = result.scalars().all()
+    has_more = (skip + len(posts)) < total
 
-    return posts
+    return PaginatedPostResponse(
+        posts=[PostResponse.model_validate(post) for post in posts],
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_more=has_more
+    )
 
 
 # PATCH method - updates information partially (some fields)
