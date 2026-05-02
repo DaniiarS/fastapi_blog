@@ -138,24 +138,6 @@ async def user_posts_page(request: Request, user_id: int, db: Annotated[AsyncSes
 # API Routes: Post and User
 # ========================================================================
 
-
-#------------------------------------------- USER -------------------------------------------
-#--------------------------------------------------------------------------------------------
-
-#                                   USERS routes moved to ./routes/users.py
-
-#--------------------------------------------------------------------------------------------
-#--------------------------------------------------------------------------------------------
-
-
-#------------------------------------------- POST -------------------------------------------
-#--------------------------------------------------------------------------------------------
-
-#                                   POSTS routes moved to ./routes/posts.py
-
-#--------------------------------------------------------------------------------------------
-#--------------------------------------------------------------------------------------------
-
 @app.get("/login", include_in_schema=False)
 async def login_page(request: Request):
     return templates.TemplateResponse(request, "login.html", {"title": "Login"})
@@ -167,6 +149,17 @@ async def register_page(request: Request):
 @app.get("/account", include_in_schema=False)
 async def account_page(request: Request):
     return templates.TemplateResponse(request, "account.html", {"title": "Account"})
+
+@app.get("/forgot-password", include_in_schema=False)
+async def forgot_password_page(request: Request):
+    return templates.TemplateResponse(request, "forgot_password.html", {"title": "Forgot Password"})
+
+@app.get("/reset-password", include_in_schema=False)
+async def reset_password_page(request: Request):
+    response = templates.TemplateResponse(request, "reset_password.html", {"title": "Reset Password"})
+    response.headers["Referrer-Policy"] = "no-referrer"
+    
+    return response
 
 # ========================================================================
 # Exception Handler

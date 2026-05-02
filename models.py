@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 # import column types
 from sqlalchemy import DateTime, Integer, String, Text, ForeignKey
@@ -21,6 +21,7 @@ class User(Base):
     # note that variable names in the backpopulate argument must be identical to the ones specified in the class fields
     posts: Mapped[list[Post]] = relationship(back_populates="author", cascade="all, delete-orphan")
 
+    reset_tokens: Mapped[list[PasswordResetToken]] = relationship(back_populates="user", cascade="all, delete-orphan")
     @property
     def image_path(self) -> str:
         if self.image_file:
@@ -39,3 +40,15 @@ class Post(Base):
 
     # this defines relationship between Post and User tables
     author: Mapped[User] = relationship(back_populates="posts")
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+    # relationship
+    user: Mapped[User] = relationship(back_populates="reset_tokens")

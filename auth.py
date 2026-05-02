@@ -15,6 +15,9 @@ from pwdlib import PasswordHash
 
 from config import settings
 
+import hashlib
+import secrets
+
 password_hash = PasswordHash.recommended()
 
 # tokenUrl has to match the login endpoint path
@@ -30,6 +33,12 @@ def hash_password(password: str) -> str:
 # argon2 generates a random salt for each hash, so that same password produces different hashes each time
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return password_hash.verify(plain_password, hashed_password)
+
+def generate_reset_token() -> str:
+    return secrets.token_urlsafe(32)
+
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     """Create a JWT access token."""
